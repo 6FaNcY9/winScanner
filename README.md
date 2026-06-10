@@ -9,15 +9,22 @@ text report on the Desktop.
 `WinScanner.ps1` collects the following information:
 
 - Windows edition, version, build number, and pending-reboot status
+- Current user privileges (admin status, `docker-users` group membership)
+  and PowerShell execution policy
 - CPU details and firmware virtualization support (VT-x / AMD-V)
 - Status of the Hyper-V, WSL, Virtual Machine Platform, and Containers
   Windows features
-- Total/free RAM and disk space
-- WSL status, installed distributions, and WSL version
-- Docker installation path, `docker version` / `docker info` output, and
-  running Docker processes
-- Active network adapters and IPv4 configuration
-- Windows Defender / antivirus real-time protection status
+- Secure Boot, firmware type (UEFI/Legacy), and TPM status
+- Group Policy restrictions affecting Hyper-V/virtualization-based security
+- Conflicting virtualization software (VirtualBox, VMware, Parallels)
+- Total/free RAM, disk space, and physical disk type (SSD/HDD)
+- WSL status, installed distributions, WSL version, `.wslconfig` contents,
+  and WSL virtual disk sizes
+- Docker installation path, `docker version` / `docker info` output,
+  running Docker processes, existing images/containers, and Compose version
+- Active network adapters, IPv4 configuration, proxy settings, and
+  Windows Firewall profile status
+- Windows Defender and any other registered antivirus products
 
 It does **not**:
 

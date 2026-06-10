@@ -81,6 +81,21 @@ Run-Step "System Uptime / Pending Reboot" {
     }
 }
 
+Run-Step "Current User Privileges" {
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($current)
+    [PSCustomObject]@{
+        UserName       = $current.Name
+        IsAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        IsDockerUsersMember = (Get-LocalGroupMember -Group 'docker-users' -ErrorAction SilentlyContinue |
+            Where-Object { $current.Name -like "*$($_.Name -replace '^[^\\]+\\','')" }) -ne $null
+    }
+}
+
+Run-Step "PowerShell Execution Policy" {
+    Get-ExecutionPolicy -List
+}
+
 # ------------------------------------------------------------------
 # CPU / virtualization
 # ------------------------------------------------------------------
@@ -111,6 +126,38 @@ Run-Step "Hyper-V Hypervisor Running" {
     }
 }
 
+Run-Step "Secure Boot & TPM Status" {
+    [PSCustomObject]@{
+        SecureBootEnabled = (Confirm-SecureBootUEFI -ErrorAction SilentlyContinue)
+        FirmwareType      = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue |
+                              ForEach-Object { if (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\State') { 'UEFI' } else { 'Legacy BIOS' } })
+        TpmPresent        = (Get-Tpm -ErrorAction SilentlyContinue).TpmPresent
+        TpmEnabled        = (Get-Tpm -ErrorAction SilentlyContinue).TpmEnabled
+        TpmVersion        = (Get-CimInstance -Namespace 'root\CIMV2\Security\MicrosoftTpm' -ClassName Win32_Tpm -ErrorAction SilentlyContinue).SpecVersion
+    }
+}
+
+Run-Step "Group Policy Restrictions (Hyper-V / Containers / Sandbox)" {
+    @(
+        'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceGuard',
+        'HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Virtualization Based Security'
+    ) | ForEach-Object {
+        if (Test-Path $_) {
+            [PSCustomObject]@{ Path = $_; Settings = (Get-ItemProperty $_ | Out-String).Trim() }
+        } else {
+            [PSCustomObject]@{ Path = $_; Settings = 'No policy keys found' }
+        }
+    }
+}
+
+Run-Step "Conflicting Virtualization Software" {
+    $names = 'VirtualBox|VMware|Parallels'
+    Get-ItemProperty 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+                      'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -match $names } |
+        Select-Object DisplayName, DisplayVersion
+}
+
 # ------------------------------------------------------------------
 # Memory & disk
 # ------------------------------------------------------------------
@@ -129,6 +176,10 @@ Run-Step "Disk Space" {
             @{N='FreeGB';E={[math]::Round($_.Free/1GB,2)}}
 }
 
+Run-Step "Physical Disk Type (SSD/HDD)" {
+    Get-PhysicalDisk | Select-Object FriendlyName, MediaType, Size, HealthStatus
+}
+
 # ------------------------------------------------------------------
 # WSL
 # ------------------------------------------------------------------
@@ -142,6 +193,21 @@ Run-Step "WSL Distributions (verbose)" {
 
 Run-Step "WSL Version Info" {
     wsl.exe --version 2>&1
+}
+
+Run-Step "WSL Configuration File (.wslconfig)" {
+    $wslConfigPath = Join-Path $env:USERPROFILE ".wslconfig"
+    if (Test-Path $wslConfigPath) {
+        Get-Content $wslConfigPath
+    } else {
+        "(no .wslconfig found - WSL2 using default resource limits)"
+    }
+}
+
+Run-Step "WSL Disk Usage (vhdx files)" {
+    $wslDataPath = Join-Path $env:LOCALAPPDATA "Packages"
+    Get-ChildItem -Path $wslDataPath -Filter "ext4.vhdx" -Recurse -ErrorAction SilentlyContinue |
+        Select-Object @{N='Path';E={$_.FullName}}, @{N='SizeGB';E={[math]::Round($_.Length/1GB,2)}}
 }
 
 # ------------------------------------------------------------------
@@ -169,6 +235,18 @@ Run-Step "Docker Desktop Service / Process" {
         Select-Object Name, Id, StartTime
 }
 
+Run-Step "Existing Docker Images" {
+    docker images 2>&1
+}
+
+Run-Step "Existing Docker Containers (all)" {
+    docker ps -a 2>&1
+}
+
+Run-Step "Docker Compose Version" {
+    docker compose version 2>&1
+}
+
 # ------------------------------------------------------------------
 # Networking
 # ------------------------------------------------------------------
@@ -182,12 +260,26 @@ Run-Step "IP Configuration" {
         Select-Object InterfaceAlias, IPAddress, PrefixLength
 }
 
+Run-Step "Network Proxy Configuration" {
+    Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' |
+        Select-Object ProxyEnable, ProxyServer, AutoConfigURL
+}
+
+Run-Step "Windows Firewall Profiles" {
+    Get-NetFirewallProfile | Select-Object Name, Enabled, DefaultInboundAction, DefaultOutboundAction
+}
+
 # ------------------------------------------------------------------
 # Security software (can interfere with Docker performance)
 # ------------------------------------------------------------------
 Run-Step "Windows Defender / AV Status" {
     Get-MpComputerStatus |
         Select-Object AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled
+}
+
+Run-Step "Registered Antivirus Products" {
+    Get-CimInstance -Namespace 'root\SecurityCenter2' -ClassName AntiVirusProduct -ErrorAction SilentlyContinue |
+        Select-Object displayName, productState
 }
 
 # ------------------------------------------------------------------
